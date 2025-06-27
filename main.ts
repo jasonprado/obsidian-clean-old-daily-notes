@@ -2,6 +2,7 @@ import { App, Plugin, PluginSettingTab, Setting, TFile, TFolder, Notice } from '
 
 interface CleanNotesSettings {
   dailyNotesFolder: string;
+  daysAfter: number;
   removeButtons: boolean;
   removeTaskQueries: boolean;
   removeEmptySections: boolean;
@@ -9,6 +10,7 @@ interface CleanNotesSettings {
 
 const DEFAULT_SETTINGS: CleanNotesSettings = {
   dailyNotesFolder: '',
+  daysAfter: 7,
   removeButtons: true,
   removeTaskQueries: true,
   removeEmptySections: true,
@@ -31,6 +33,13 @@ export default class CleanNotesPlugin extends Plugin {
     });
 
     this.addSettingTab(new CleanNotesSettingTab(this.app, this));
+
+    this.app.workspace.onLayoutReady(() => {
+      this.cleanNotes();
+      this.registerInterval(
+        window.setInterval(() => this.cleanNotes(), 24 * 60 * 60 * 1000),
+      );
+    });
   }
 
   async cleanNotes() {
@@ -46,6 +55,7 @@ export default class CleanNotesPlugin extends Plugin {
     }
     for (const child of folder.children) {
       if (child instanceof TFile && child.extension === 'md') {
+        if (!this.isOldEnough(child.basename)) continue;
         const original = await this.app.vault.read(child);
         const cleaned = this.applyTransforms(original);
         if (original !== cleaned) {
@@ -54,6 +64,16 @@ export default class CleanNotesPlugin extends Plugin {
       }
     }
     new Notice('Finished cleaning daily notes');
+  }
+
+  isOldEnough(basename: string): boolean {
+    const match = basename.match(/(\d{4}-\d{2}-\d{2})/);
+    if (!match) return false;
+    const fileDate = new Date(match[1]);
+    if (isNaN(fileDate.getTime())) return false;
+    const now = new Date();
+    const diff = (now.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24);
+    return diff >= this.settings.daysAfter;
   }
 
   applyTransforms(text: string): string {
@@ -131,6 +151,22 @@ class CleanNotesSettingTab extends PluginSettingTab {
           .onChange(async value => {
             this.plugin.settings.dailyNotesFolder = value.trim();
             await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Days after to clean')
+      .setDesc('Clean notes older than this many days')
+      .addText(text =>
+        text
+          .setPlaceholder('7')
+          .setValue(String(this.plugin.settings.daysAfter))
+          .onChange(async value => {
+            const num = parseInt(value, 10);
+            if (!isNaN(num)) {
+              this.plugin.settings.daysAfter = num;
+              await this.plugin.saveSettings();
+            }
           }),
       );
 
